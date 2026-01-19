@@ -1,6 +1,9 @@
-def main():
-    print("Hello from fresh-agent!")
-
+#!/usr/bin/env python3
+"""
+Main entry point for the agent.
+"""
+import asyncio
+from src.cli import main
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
