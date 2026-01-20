@@ -24,13 +24,15 @@ class AgentFactory:
     def create_tool_manager(
         history_manager: Optional["HistoryManager"] = None,
         ui_manager: Optional[UIProtocol] = None,
-        subagent_manager: Optional["SubagentManager"] = None
+        subagent_manager: Optional["SubagentManager"] = None,
+        workspace_root: Optional[str] = None
     ) -> "ToolManager":
         from src.tools.manager import ToolManager
         return ToolManager(
             history_manager=history_manager,
             ui_manager=ui_manager,
-            subagent_manager=subagent_manager
+            subagent_manager=subagent_manager,
+            workspace_root=workspace_root
         )
     
     @staticmethod
@@ -44,9 +46,9 @@ class AgentFactory:
         return PromptManager()
     
     @staticmethod
-    def create_subagent_manager() -> "SubagentManager":
+    def create_subagent_manager(workspace_root: Optional[str] = None) -> "SubagentManager":
         from src.subagents.manager import SubagentManager
-        return SubagentManager()
+        return SubagentManager(workspace_root=workspace_root or ".")
     
     @staticmethod
     def create_history_manager(
@@ -73,9 +75,15 @@ class AgentFactory:
         history_manager: Optional["HistoryManager"] = None,
         prompt_manager: Optional["PromptManager"] = None,
         subagent_manager: Optional["SubagentManager"] = None,
+        workspace_root: Optional[str] = None,
         is_headless: bool = False
     ):
+        import os
         from src.agent.agent import Agent
+        
+        # Determine workspace root - default to cwd
+        if workspace_root is None:
+            workspace_root = os.getcwd()
         
         if ui_manager is None:
             raise ValueError("ui_manager must be provided. No default implementation available.")
@@ -88,19 +96,21 @@ class AgentFactory:
                 ui_manager=ui_manager,
                 api_client=api_client
             )
+        
+        # Create subagent_manager with workspace_root BEFORE tool_manager
+        if subagent_manager is None:
+            subagent_manager = AgentFactory.create_subagent_manager(workspace_root=workspace_root)
             
         if tool_manager is None:
             tool_manager = AgentFactory.create_tool_manager(
                 history_manager=history_manager,
                 ui_manager=ui_manager,
-                subagent_manager=subagent_manager
+                subagent_manager=subagent_manager,
+                workspace_root=workspace_root
             )
             
         if prompt_manager is None:
             prompt_manager = AgentFactory.create_prompt_manager()
-
-        if subagent_manager is None:
-            subagent_manager = AgentFactory.create_subagent_manager()
         
         return Agent(
             tool_manager=tool_manager,

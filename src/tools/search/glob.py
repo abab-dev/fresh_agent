@@ -1,7 +1,7 @@
 """
-Glob-based file finder using fd or find.
+Simplified glob-based file finder.
 
-Fast file discovery with pattern matching and type filtering.
+Based on RepOMind's glob_search - minimal parameters, maximum clarity.
 """
 
 import asyncio
@@ -12,95 +12,68 @@ from typing import Optional, List
 from src.tools.base import BaseTool
 
 
-TOOL_DESCRIPTION = """Find files and directories using glob patterns.
+TOOL_DESCRIPTION = """Find files matching a glob pattern.
 
-Uses fd (fast find) when available, falls back to find command.
+Fast file discovery using fd (falls back to find).
 
-Features:
-- Glob pattern matching (e.g., '*.py', 'test_*.js', '**/config.*')
-- Filter by type (file, directory, or both)
-- Respects .gitignore by default
-- Limit search depth
-- Filter by extension
+Args:
+    pattern: Glob pattern (e.g., '*.py', 'test_*', '**/*config*')
+    path: Directory to search (default: workspace root)
 
 Use cases:
-- Find all Python files in a project
-- Locate configuration files
-- Discover test files
-- Find files by partial name"""
+- Find all Python files: *.py
+- Find test files: test_*.py or *_test.py
+- Find config files: *config* or *.json
+- Find by partial name: *auth*, *api*"""
 
 
 class GlobTool(BaseTool):
-    def __init__(self):
+    def __init__(self, workspace_root: str = None):
         super().__init__()
         self._has_fd = shutil.which("fd") is not None
+        self._workspace_root = workspace_root or os.getcwd()
 
     @staticmethod
     def get_tool_name():
         return "glob"
 
+    def _resolve_path(self, path: Optional[str]) -> str:
+        """Resolve path to absolute. Default to workspace root."""
+        if path is None:
+            return self._workspace_root
+        
+        if not os.path.isabs(path):
+            return os.path.join(self._workspace_root, path)
+        
+        return path
+
     async def act(
         self,
         pattern: str,
-        path: str,
-        file_type: Optional[str] = None,
-        extensions: Optional[List[str]] = None,
-        max_depth: Optional[int] = None,
-        include_hidden: bool = False,
-        max_results: int = 100
+        path: Optional[str] = None
     ):
         """
         Find files matching a pattern.
         
         Args:
-            pattern: Glob pattern (e.g., '*.py', 'test_*', '**/config.*')
-            path: Directory to search in
-            file_type: 'file', 'directory', or None for both
-            extensions: List of extensions to include (e.g., ['py', 'js'])
-            max_depth: Maximum directory depth to search
-            include_hidden: Include hidden files/directories
-            max_results: Maximum results to return
+            pattern: Glob pattern (e.g., '*.py', 'test_*', '*config*')
+            path: Directory to search (default: workspace root)
         """
-        if not os.path.exists(path):
-            return {"error": f"Path not found: {path}"}
+        search_path = self._resolve_path(path)
         
-        if not os.path.isdir(path):
-            return {"error": f"Not a directory: {path}"}
+        if not os.path.exists(search_path):
+            return {"error": f"Path not found: {search_path}"}
+        
+        if not os.path.isdir(search_path):
+            return {"error": f"Not a directory: {search_path}"}
         
         if self._has_fd:
-            return await self._search_fd(
-                pattern, path, file_type, extensions,
-                max_depth, include_hidden, max_results
-            )
+            return await self._search_fd(pattern, search_path)
         else:
-            return await self._search_find(
-                pattern, path, file_type,
-                max_depth, include_hidden, max_results
-            )
+            return await self._search_find(pattern, search_path)
 
-    async def _search_fd(
-        self, pattern, path, file_type, extensions,
-        max_depth, include_hidden, max_results
-    ):
-        cmd = ["fd", "--glob"]  # Use glob pattern syntax
-        
-        if file_type == "file":
-            cmd.extend(["--type", "f"])
-        elif file_type == "directory":
-            cmd.extend(["--type", "d"])
-        
-        if extensions:
-            for ext in extensions:
-                cmd.extend(["-e", ext.lstrip(".")])
-        
-        if max_depth:
-            cmd.extend(["--max-depth", str(max_depth)])
-        
-        if include_hidden:
-            cmd.append("--hidden")
-        
-        cmd.extend(["--max-results", str(max_results)])
-        cmd.extend(["--", pattern, path])
+    async def _search_fd(self, pattern: str, path: str):
+        cmd = ["fd", "--glob", "--max-results", "100", "--", pattern, path]
         
         try:
             process = await asyncio.create_subprocess_exec(
@@ -109,18 +82,14 @@ class GlobTool(BaseTool):
                 stderr=asyncio.subprocess.PIPE
             )
             
-            stdout, _ = await asyncio.wait_for(
-                process.communicate(),
-                timeout=30
-            )
-            
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=30)
             output = stdout.decode("utf-8", errors="replace")
-            files = self._parse_results(output, path, max_results)
+            files = self._parse_results(output, path)
             
             return {
-                "result": f"Found {len(files)} items",
+                "result": f"Found {len(files)} files",
                 "files": files,
-                "truncated": len(files) >= max_results,
+                "truncated": len(files) >= 100,
                 "engine": "fd"
             }
             
@@ -129,28 +98,12 @@ class GlobTool(BaseTool):
         except Exception as e:
             return {"error": f"Search failed: {str(e)}"}
 
-    async def _search_find(
-        self, pattern, path, file_type,
-        max_depth, include_hidden, max_results
-    ):
-        cmd = ["find", path]
-        
-        if max_depth:
-            cmd.extend(["-maxdepth", str(max_depth)])
-        
-        if file_type == "file":
-            cmd.extend(["-type", "f"])
-        elif file_type == "directory":
-            cmd.extend(["-type", "d"])
+    async def _search_find(self, pattern: str, path: str):
+        cmd = ["find", path, "-type", "f", "-name", pattern]
         
         # Exclude common directories
-        for exc in [".git", "node_modules", "__pycache__", ".venv"]:
+        for exc in [".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"]:
             cmd.extend(["-not", "-path", f"*/{exc}/*"])
-        
-        if not include_hidden:
-            cmd.extend(["-not", "-name", ".*"])
-        
-        cmd.extend(["-name", pattern])
         
         try:
             process = await asyncio.create_subprocess_exec(
@@ -159,18 +112,14 @@ class GlobTool(BaseTool):
                 stderr=asyncio.subprocess.PIPE
             )
             
-            stdout, _ = await asyncio.wait_for(
-                process.communicate(),
-                timeout=30
-            )
-            
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=30)
             output = stdout.decode("utf-8", errors="replace")
-            files = self._parse_results(output, path, max_results)
+            files = self._parse_results(output, path)
             
             return {
-                "result": f"Found {len(files)} items",
+                "result": f"Found {len(files)} files",
                 "files": files,
-                "truncated": len(files) >= max_results,
+                "truncated": len(files) >= 100,
                 "engine": "find"
             }
             
@@ -179,11 +128,11 @@ class GlobTool(BaseTool):
         except Exception as e:
             return {"error": f"Search failed: {str(e)}"}
 
-    def _parse_results(self, output: str, base_path: str, max_results: int) -> List[dict]:
+    def _parse_results(self, output: str, base_path: str) -> List[dict]:
         files = []
         base = Path(base_path).resolve()
         
-        for line in output.strip().split("\n")[:max_results]:
+        for line in output.strip().split("\n")[:100]:
             if not line:
                 continue
             
@@ -195,20 +144,10 @@ class GlobTool(BaseTool):
                 except ValueError:
                     rel_path = full_path
                 
-                info = {
+                files.append({
                     "path": str(full_path),
-                    "relative": str(rel_path),
-                    "name": full_path.name,
-                    "is_file": full_path.is_file()
-                }
-                
-                if full_path.is_file():
-                    try:
-                        info["size"] = full_path.stat().st_size
-                    except OSError:
-                        pass
-                
-                files.append(info)
+                    "name": full_path.name
+                })
             except Exception:
                 continue
         
@@ -225,38 +164,14 @@ class GlobTool(BaseTool):
                     "properties": {
                         "pattern": {
                             "type": "string",
-                            "description": "Glob pattern to match (e.g., '*.py', 'test_*', 'config.*')."
+                            "description": "Glob pattern to match (e.g., '*.py', 'test_*', '*config*')."
                         },
                         "path": {
                             "type": "string",
-                            "description": "Directory to search in (absolute path)."
-                        },
-                        "file_type": {
-                            "type": "string",
-                            "enum": ["file", "directory"],
-                            "description": "Filter by type: 'file' or 'directory'. Default: both."
-                        },
-                        "extensions": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of extensions to include (e.g., ['py', 'js'])."
-                        },
-                        "max_depth": {
-                            "type": "integer",
-                            "description": "Maximum directory depth to search."
-                        },
-                        "include_hidden": {
-                            "type": "boolean",
-                            "description": "Include hidden files/directories. Default false.",
-                            "default": False
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum results to return. Default 100.",
-                            "default": 100
+                            "description": "Directory to search. Default: workspace root."
                         }
                     },
-                    "required": ["pattern", "path"]
+                    "required": ["pattern"]
                 }
             }
         }

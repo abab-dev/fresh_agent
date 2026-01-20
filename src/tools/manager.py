@@ -1,3 +1,4 @@
+import os
 from typing import Dict, Any, List, Optional, TYPE_CHECKING, Protocol
 
 from src.tools.base import BaseTool
@@ -59,13 +60,15 @@ class ToolManager:
         self, 
         history_manager: Optional["HistoryManager"] = None, 
         ui_manager: Optional[UIProtocol] = None, 
-        subagent_manager: Optional["SubagentManager"] = None
+        subagent_manager: Optional["SubagentManager"] = None,
+        workspace_root: Optional[str] = None
     ):
         self.tools: Dict[str, BaseTool] = {}
         self._tool_classes: Dict[str, type] = {}
         self.history_manager = history_manager
         self.ui_manager = ui_manager
         self.subagent_manager = subagent_manager
+        self.workspace_root = workspace_root or os.getcwd()
         self._tools_initialized = False
 
     def _ensure_tools_loaded(self):
@@ -97,6 +100,9 @@ class ToolManager:
                     )
                 elif name == "scratchpad":
                     self.tools[name] = tool_class(ui_manager=self.ui_manager)
+                # Search and code analysis tools get workspace_root
+                elif name in ("ripgrep", "glob", "grep_search", "file_search", "extract_symbols"):
+                    self.tools[name] = tool_class(workspace_root=self.workspace_root)
                 else:
                     self.tools[name] = tool_class()
             except Exception:
