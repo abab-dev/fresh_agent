@@ -7,7 +7,7 @@ def read_file_lines(
     file_path: str,
     start_line: int = 1,
     end_line: Optional[int] = None,
-    max_lines: int = 500
+    max_lines: int = 2000  # Increased from 500 to read full files
 ) -> Tuple[Optional[str], List[str], int]:
     path = Path(file_path)
     

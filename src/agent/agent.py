@@ -134,7 +134,8 @@ class Agent:
         )
         return {
             "messages": messages,
-            "tools": self._tool_manager.get_tools_description(),
+            # Use main agent tools (excludes explorer-only search tools)
+            "tools": self._tool_manager.get_main_agent_tools(),
         }
 
     def _build_assistant_message(self, response_message) -> dict:

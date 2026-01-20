@@ -235,11 +235,12 @@ class HistoryManager(BaseHistoryManager):
         return cleared_count
     
     def auto_clear_tool_results(self) -> None:
+        # Less aggressive clearing - preserve explorer context!
         self._tool_result_count += 1
-        if self._tool_result_count >= 10:
-            cleared = self.clear_old_tool_results(keep_last_n=5)
+        if self._tool_result_count >= 50:  # Was 10 - too aggressive
+            cleared = self.clear_old_tool_results(keep_last_n=20)  # Was 5
             if cleared > 0:
-                self._ui_manager.print_assistant_message(
+                self._ui_manager.print_info(
                     f"Cleared {cleared} old tool results to optimize context."
                 )
             self._tool_result_count = 0

@@ -23,13 +23,13 @@ TOOL_REGISTRY = {
     "delete_file": ("src.tools.filesystem.delete", "DeleteFileTool"),
     "list_dir": ("src.tools.filesystem.list_dir", "ListDirTool"),
     
-    # Search
+    # Search (explorer only)
     "grep_search": ("src.tools.search.grep", "GrepSearchTool"),
     "file_search": ("src.tools.search.file_search", "FileSearchTool"),
     "ripgrep": ("src.tools.search.ripgrep", "RipgrepTool"),
     "glob": ("src.tools.search.glob", "GlobTool"),
     
-    # Code Analysis
+    # Code Analysis (explorer only)
     "extract_symbols": ("src.tools.code.symbols", "ExtractSymbolsTool"),
     "get_context": ("src.tools.code.context", "GetContextTool"),
     "repo_structure": ("src.tools.code.structure", "RepoStructureTool"),
@@ -51,6 +51,14 @@ TOOL_REGISTRY = {
     
     # Delegation
     "delegate": ("src.tools.delegate", "DelegateTool"),
+}
+
+# Tools that ONLY the explorer sub-agent should use
+# Main agent should delegate to explorer for deep code analysis
+EXPLORER_ONLY_TOOLS = {
+    "extract_symbols",
+    "get_context",
+    "repo_structure",
 }
 
 
@@ -118,6 +126,15 @@ class ToolManager:
     def get_tools_description(self) -> List[Dict[str, Any]]:
         self._ensure_tools_loaded()
         return [tool.json_schema() for tool in self.tools.values()]
+    
+    def get_main_agent_tools(self) -> List[Dict[str, Any]]:
+        """Get tools for the main agent (excludes explorer-only tools)."""
+        self._ensure_tools_loaded()
+        return [
+            tool.json_schema() 
+            for name, tool in self.tools.items() 
+            if name not in EXPLORER_ONLY_TOOLS
+        ]
 
     def get_tool_status(self, tool_name: str) -> str:
         tool = self.get_tool(tool_name)
