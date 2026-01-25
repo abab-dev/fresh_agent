@@ -14,15 +14,39 @@ Use this for:
 - Installing dependencies
 - Running tests
 
-IMPORTANT GUIDELINES:
-1. Use `workdir` parameter instead of `cd && command` patterns
-2. Set need_user_approve=true for destructive commands (rm, sudo, git push --force)
-3. For long outputs, results are automatically truncated with a file path for full content
-
 DO NOT use this for:
 - Reading files (use read_file instead)
 - Writing/editing files (use edit_file, search_replace instead)  
 - Searching code (use ripgrep, glob instead)
+
+## Command Execution Guidelines
+
+**1. Path Quoting (REQUIRED for paths with spaces):**
+- CORRECT: cd "/path/with spaces/dir"
+- WRONG: cd /path/with spaces/dir (will fail!)
+- CORRECT: python "/my script.py"
+- WRONG: python /my script.py
+
+**2. Directory Verification:**
+Before creating directories or files, verify the parent exists:
+- First: ls /parent/dir
+- Then: mkdir /parent/dir/new_folder
+
+**3. Parallel vs Sequential:**
+- Independent commands → make SEPARATE parallel tool calls
+  (e.g., call git status AND npm test in parallel)
+- Dependent commands → chain with &&:
+  git add . && git commit -m "msg" && git push
+
+**4. Use workdir Instead of cd:**
+- CORRECT: cmd_runner(command="pytest tests", workdir="/project")
+- WRONG: cmd_runner(command="cd /project && pytest tests")
+
+**5. Approval Required For:**
+Set need_user_approve=true for:
+- rm, sudo, chmod, chown
+- git push, git reset --hard, force operations
+- pip install -g, npm install -g (global installs)
 
 When debugging:
 1. Write a small test script to reproduce the issue
