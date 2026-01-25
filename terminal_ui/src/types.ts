@@ -12,6 +12,12 @@ export interface ToolRequest {
     args: string
 }
 
+export interface Todo {
+    id: number
+    content: string
+    status: 'pending' | 'in_progress' | 'completed'
+}
+
 export interface BridgeMessage {
     type: string
     data: Record<string, unknown>
@@ -24,4 +30,6 @@ export interface AppState {
     workingDir: string
     pendingTool: ToolRequest | null
     statusLine: string
+    todos: Todo[]
 }
+

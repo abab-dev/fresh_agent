@@ -1,49 +1,96 @@
-import os
-from pathlib import Path
-from datetime import datetime
-from typing import Literal, Optional, Protocol
+from typing import Literal, Optional, Protocol, List, Dict
 from src.tools.base import BaseTool
 
 
 TOOL_DESCRIPTION = """Manage a todo list for tracking task progress.
 
-Actions:
-- add: Add a new todo item
-- complete: Mark a todo as completed
-- list: Show all todos
-- clear: Remove all completed todos
+## When to Use This Tool
+Use proactively for:
+1. Complex multi-step tasks (3+ distinct steps)
+2. User provides multiple tasks (numbered or comma-separated list)
+3. Feature implementation requiring multiple files
+4. Non-trivial work: investigate → implement → verify
 
-Use this to break down complex tasks and track progress.
-Creates a todo.md file in the current directory."""
+## When NOT to Use This Tool
+Skip when:
+1. Single straightforward task
+2. Trivial task (less than 3 steps)
+3. Purely informational/conversational requests
+4. You can complete the work in 1-2 tool calls
+
+RULE: If you can finish in 1-2 tool calls, just do it directly.
+
+## Actions
+- add: Add new todo item(s)
+- start: Mark a todo as in_progress (BEFORE you begin work)
+- complete: Mark a todo as completed (IMMEDIATELY after finishing)
+- list: Show all todos
+- clear: Remove completed todos
+
+## Workflow
+1. Add all tasks upfront when you understand the scope
+2. Mark exactly ONE task as in_progress at a time
+3. Complete tasks IMMEDIATELY after finishing (don't batch)
+4. Only mark complete when FULLY done (not partial)
+
+## Example
+User: "Add user registration with validation"
+
+todo_write(action="add", content="Create user model")
+todo_write(action="add", content="Add validation logic")
+todo_write(action="add", content="Create registration endpoint")
+todo_write(action="add", content="Add tests")
+todo_write(action="start", todo_id=0)
+# ... work on first task ...
+todo_write(action="complete", todo_id=0)
+todo_write(action="start", todo_id=1)
+# ... continue ..."""
 
 
 class UIProtocol(Protocol):
     def print_info(self, message: str) -> None: ...
+    def emit(self, msg_type: str, data: dict) -> None: ...
 
 
 class TodoTool(BaseTool):
-    def __init__(self, ui_manager: Optional[UIProtocol] = None, todo_path: str = None):
+    def __init__(self, ui_manager: Optional[UIProtocol] = None):
         super().__init__()
         self._ui_manager = ui_manager
-        self._todo_path = todo_path or os.path.join(os.getcwd(), "todo.md")
-        self._todos = []
+        self._todos: List[Dict] = []
+        self._next_id = 0
 
     @staticmethod
     def get_tool_name():
         return "todo_write"
 
+    def _emit_update(self):
+        """Emit todo list update to UI."""
+        if self._ui_manager and hasattr(self._ui_manager, 'emit'):
+            self._ui_manager.emit("todo_update", {"todos": self._todos})
+
+    def _get_summary(self) -> str:
+        """Get a one-line summary of todo status."""
+        pending = sum(1 for t in self._todos if t["status"] == "pending")
+        in_progress = sum(1 for t in self._todos if t["status"] == "in_progress")
+        completed = sum(1 for t in self._todos if t["status"] == "completed")
+        total = len(self._todos)
+        return f"{completed}/{total} complete, {in_progress} in progress, {pending} pending"
+
     async def act(
         self,
-        action: Literal["add", "complete", "list", "clear"],
+        action: Literal["add", "start", "complete", "list", "clear"],
         content: Optional[str] = None,
         todo_id: Optional[int] = None
     ):
-        self._load_todos()
-        
         if action == "add":
             if not content:
                 return {"error": "Content is required for adding a todo"}
             return self._add_todo(content)
+        
+        elif action == "start":
+            if todo_id is None:
+                return {"error": "todo_id is required for starting a todo"}
+            return self._start_todo(todo_id)
         
         elif action == "complete":
             if todo_id is None:
@@ -60,89 +107,99 @@ class TodoTool(BaseTool):
             return {"error": f"Unknown action: {action}"}
 
     def _add_todo(self, content: str) -> dict:
-        todo_id = len(self._todos)
+        todo_id = self._next_id
+        self._next_id += 1
+        
         self._todos.append({
             "id": todo_id,
             "content": content,
-            "status": "pending",
-            "created_at": datetime.now().isoformat()
+            "status": "pending"
         })
-        self._save_todos()
-        return {"result": f"Added todo #{todo_id}", "id": todo_id}
+        
+        self._emit_update()
+        return {
+            "result": f"Added todo #{todo_id}: {content}",
+            "id": todo_id,
+            "summary": self._get_summary()
+        }
+
+    def _start_todo(self, todo_id: int) -> dict:
+        # Check if another task is already in progress
+        in_progress = [t for t in self._todos if t["status"] == "in_progress"]
+        if in_progress:
+            return {
+                "error": f"Task #{in_progress[0]['id']} is already in progress. Complete it first.",
+                "hint": "Only ONE task should be in_progress at a time."
+            }
+        
+        for todo in self._todos:
+            if todo["id"] == todo_id:
+                if todo["status"] == "completed":
+                    return {"error": f"Todo #{todo_id} is already completed"}
+                
+                todo["status"] = "in_progress"
+                self._emit_update()
+                return {
+                    "result": f"Started: {todo['content']}",
+                    "summary": self._get_summary()
+                }
+        
+        return {"error": f"Todo #{todo_id} not found"}
 
     def _complete_todo(self, todo_id: int) -> dict:
         for todo in self._todos:
             if todo["id"] == todo_id:
+                if todo["status"] == "completed":
+                    return {"error": f"Todo #{todo_id} is already completed"}
+                
                 todo["status"] = "completed"
-                todo["completed_at"] = datetime.now().isoformat()
-                self._save_todos()
-                return {"result": f"Completed todo #{todo_id}"}
+                self._emit_update()
+                
+                # Find next pending task
+                next_pending = next(
+                    (t for t in self._todos if t["status"] == "pending"),
+                    None
+                )
+                hint = ""
+                if next_pending:
+                    hint = f" Next: #{next_pending['id']} - {next_pending['content']}"
+                
+                return {
+                    "result": f"Completed: {todo['content']}.{hint}",
+                    "summary": self._get_summary()
+                }
+        
         return {"error": f"Todo #{todo_id} not found"}
 
     def _list_todos(self) -> dict:
-        pending = [t for t in self._todos if t["status"] == "pending"]
-        completed = [t for t in self._todos if t["status"] == "completed"]
+        if not self._todos:
+            return {"result": "No todos", "todos": []}
+        
+        lines = []
+        for todo in self._todos:
+            status_icon = {
+                "pending": "○",
+                "in_progress": "▶",
+                "completed": "✓"
+            }.get(todo["status"], "?")
+            lines.append(f"{status_icon} #{todo['id']}: {todo['content']}")
+        
         return {
-            "result": f"{len(pending)} pending, {len(completed)} completed",
-            "pending": pending,
-            "completed": completed
+            "result": "\n".join(lines),
+            "todos": self._todos,
+            "summary": self._get_summary()
         }
 
     def _clear_completed(self) -> dict:
         original_count = len(self._todos)
         self._todos = [t for t in self._todos if t["status"] != "completed"]
         cleared = original_count - len(self._todos)
-        self._save_todos()
-        return {"result": f"Cleared {cleared} completed todos"}
-
-    def _load_todos(self):
-        path = Path(self._todo_path)
-        self._todos = []
         
-        if not path.exists():
-            return
-        
-        try:
-            content = path.read_text(encoding="utf-8")
-            todo_id = 0
-            for line in content.strip().split("\n"):
-                if line.startswith("- [x] "):
-                    self._todos.append({
-                        "id": todo_id,
-                        "content": line[6:],
-                        "status": "completed"
-                    })
-                    todo_id += 1
-                elif line.startswith("- [ ] "):
-                    self._todos.append({
-                        "id": todo_id,
-                        "content": line[6:],
-                        "status": "pending"
-                    })
-                    todo_id += 1
-        except IOError:
-            pass
-
-    def _save_todos(self):
-        lines = ["# Todo List", ""]
-        
-        pending = [t for t in self._todos if t["status"] == "pending"]
-        completed = [t for t in self._todos if t["status"] == "completed"]
-        
-        if pending:
-            lines.append("## Pending")
-            for todo in pending:
-                lines.append(f"- [ ] {todo['content']}")
-            lines.append("")
-        
-        if completed:
-            lines.append("## Completed")
-            for todo in completed:
-                lines.append(f"- [x] {todo['content']}")
-            lines.append("")
-        
-        content = "\n".join(lines)
-        Path(self._todo_path).write_text(content, encoding="utf-8")
+        self._emit_update()
+        return {
+            "result": f"Cleared {cleared} completed todos",
+            "summary": self._get_summary()
+        }
 
     def json_schema(self):
         return {
@@ -155,7 +212,7 @@ class TodoTool(BaseTool):
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["add", "complete", "list", "clear"],
+                            "enum": ["add", "start", "complete", "list", "clear"],
                             "description": "The action to perform."
                         },
                         "content": {
@@ -164,7 +221,7 @@ class TodoTool(BaseTool):
                         },
                         "todo_id": {
                             "type": "integer",
-                            "description": "The todo ID (required for 'complete' action)."
+                            "description": "The todo ID (required for 'start' and 'complete' actions)."
                         }
                     },
                     "required": ["action"]

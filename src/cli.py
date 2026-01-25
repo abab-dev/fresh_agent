@@ -40,12 +40,41 @@ class SimpleUI:
     def stop_stream_display(self) -> None:
         print()
     
+    def _format_args_summary(self, args: dict, max_len: int = 80) -> str:
+        """Format args dict into a compact summary string."""
+        if not args:
+            return ""
+        
+        parts = []
+        for key, value in args.items():
+            val_str = str(value)
+            # Truncate long values
+            if len(val_str) > 50:
+                val_str = val_str[:47] + "..."
+            # Quote strings
+            if isinstance(value, str):
+                val_str = f'"{val_str}"'
+            parts.append(f"{key}={val_str}")
+        
+        result = ", ".join(parts)
+        if len(result) > max_len:
+            result = result[:max_len - 3] + "..."
+        return result
+    
     def show_preparing_tool(self, name: str, args: dict) -> None:
-        print(f"\n[tool] {name}")
+        args_str = self._format_args_summary(args)
+        if args_str:
+            print(f"\n[tool] {name}({args_str})")
+        else:
+            print(f"\n[tool] {name}()")
     
     def show_tool_execution(self, name: str, args: dict, success: bool, result: str) -> None:
         status = "✓" if success else "✗"
-        print(f"[tool] {name} {status}")
+        args_str = self._format_args_summary(args)
+        if args_str:
+            print(f"[tool] {name}({args_str}) {status}")
+        else:
+            print(f"[tool] {name}() {status}")
     
     async def wait_for_user_approval(self, content: str) -> Tuple[bool, str]:
         print(f"\n[APPROVAL REQUIRED]\n{content}")

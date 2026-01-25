@@ -5,6 +5,7 @@ import { MessageList } from './components/MessageList.js'
 import { StreamingResponse } from './components/StreamingResponse.js'
 import { Spinner } from './components/Spinner.js'
 import { InputBox } from './components/InputBox.js'
+import { TodoList } from './components/TodoList.js'
 import { useBridge } from './hooks/useBridge.js'
 import { useTerminalWidth } from './hooks/useTerminalWidth.js'
 import { useKeyboard } from './hooks/useKeyboard.js'
@@ -25,6 +26,7 @@ const App: React.FC = () => {
         workingDir,
         pendingTool,
         statusLine,
+        todos,
         sendUserInput,
         sendApproval,
         stopAgent
@@ -69,6 +71,7 @@ const App: React.FC = () => {
             <Header workingDirectory={workingDir} terminalWidth={width} />
 
             <Box flexDirection="column" marginBottom={1}>
+                {todos.length > 0 && <TodoList todos={todos} />}
                 <MessageList messages={messages} width={width} />
                 <StreamingResponse content={currentResponse} width={width} />
                 {(mode === 'thinking' || mode === 'executing') && !currentResponse && (

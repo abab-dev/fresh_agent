@@ -111,6 +111,10 @@ class BridgeUI:
     def set_executing(self, tool_name: str) -> None:
         self.emit("tool_executing", {"name": tool_name})
     
+    def todo_update(self, todos: list) -> None:
+        """Emit updated todo list to frontend."""
+        self.emit("todo_update", {"todos": todos})
+    
     # Subagent events
     def subagent_start(self, agent_name: str, task: str) -> None:
         """Called when a subagent is spawned."""

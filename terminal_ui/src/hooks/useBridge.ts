@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { spawn, ChildProcess } from 'child_process'
 import { useApp } from 'ink'
-import { AppMode, Message, ToolRequest, BridgeMessage } from '../types.js'
+import { AppMode, Message, ToolRequest, BridgeMessage, Todo } from '../types.js'
 
 export const useBridge = () => {
     const [mode, setMode] = useState<AppMode>('loading')
@@ -10,6 +10,7 @@ export const useBridge = () => {
     const [workingDir, setWorkingDir] = useState('')
     const [pendingTool, setPendingTool] = useState<ToolRequest | null>(null)
     const [statusLine, setStatusLine] = useState('')
+    const [todos, setTodos] = useState<Todo[]>([])
 
     const processRef = useRef<ChildProcess | null>(null)
     const stoppingRef = useRef(false)
@@ -80,21 +81,46 @@ export const useBridge = () => {
 
             case 'tool_preparing': {
                 setMode('executing')
-                setStatusLine(`> ${data.name}`)
                 const args = (data.args || {}) as Record<string, unknown>
                 const summary = Object.entries(args)
-                    .map(([k, v]) => `${k}=${typeof v === 'string' ? v.slice(0, 50) : v}`)
+                    .slice(0, 4)  // Max 4 args shown
+                    .map(([k, v]) => {
+                        const val = typeof v === 'string'
+                            ? `"${v.length > 40 ? v.slice(0, 37) + '...' : v}"`
+                            : String(v).slice(0, 40)
+                        return `${k}=${val}`
+                    })
                     .join(', ')
-                appendMessage('tool', `● ${data.name}(${summary})`)
+                const argsDisplay = summary + (Object.keys(args).length > 4 ? ', ...' : '')
+                setStatusLine(`> ${data.name}(${argsDisplay})`)
+                appendMessage('tool', `● ${data.name}(${argsDisplay})`)
                 break
             }
 
             case 'tool_result': {
                 const name = (data.name as string) || 'tool'
                 const success = data.success as boolean | undefined
-                const result = typeof data.result === 'string' ? data.result : JSON.stringify(data.result)
+                const args = (data.args || {}) as Record<string, unknown>
                 const status = success === false ? '✗' : '✓'
-                appendMessage('tool', `${status} ${name}: ${result.slice(0, 200)}`)
+
+                // Compact args for result line
+                const argKeys = Object.keys(args).slice(0, 2)
+                const argsHint = argKeys.length > 0
+                    ? argKeys.map(k => {
+                        const v = args[k]
+                        const val = typeof v === 'string' ? v.slice(0, 20) : String(v).slice(0, 15)
+                        return `${k}=${val}`
+                    }).join(', ')
+                    : ''
+
+                // Show result preview for failures
+                let resultPreview = ''
+                if (success === false) {
+                    const result = typeof data.result === 'string' ? data.result : JSON.stringify(data.result)
+                    resultPreview = `: ${result.slice(0, 100)}`
+                }
+
+                appendMessage('tool', `${status} ${name}(${argsHint})${resultPreview}`)
                 setStatusLine('')
                 break
             }
@@ -184,6 +210,13 @@ export const useBridge = () => {
                 setStatusLine('')
                 break
             }
+
+            // Todo events
+            case 'todo_update': {
+                const todoList = (data.todos as Todo[]) || []
+                setTodos(todoList)
+                break
+            }
         }
     }
 
@@ -258,6 +291,7 @@ export const useBridge = () => {
         workingDir,
         pendingTool,
         statusLine,
+        todos,
         sendUserInput,
         sendApproval,
         stopAgent

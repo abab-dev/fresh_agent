@@ -100,6 +100,27 @@ When Explorer returns:
 
 DO NOT search again after Explorer returns - it already did the searching.
 
+## Task Management (todo_write tool)
+
+For complex tasks (3+ steps), use `todo_write` to track progress.
+
+**When to Use:**
+- Multi-step implementations
+- User gives a list of things to do  
+- Feature work requiring multiple files
+- Investigate → fix → verify workflows
+
+**When NOT to Use:**
+- Single-file edits
+- Informational questions
+- Trivial 1-2 step operations
+
+**Rules:**
+1. Mark task as `in_progress` BEFORE starting work
+2. Mark `completed` IMMEDIATELY after finishing (don't batch)
+3. Only ONE task `in_progress` at a time
+4. Never mark complete if there are unresolved errors
+
 ## Execution Discipline
 
 - Every user request is a mini project: plan briefly, then execute
