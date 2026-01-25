@@ -1,4 +1,4 @@
-from typing import Protocol, Optional, TYPE_CHECKING
+from typing import Protocol, Optional, TYPE_CHECKING, List, Dict, Any, Callable
 
 from src.agent.client import LLMClient
 from src.agent.message import MessageBuilder
@@ -46,6 +46,7 @@ class Agent:
         self._subagent_manager = subagent_manager
         self._is_in_task = False
         self._is_headless = is_headless
+        self._on_turn_complete: Optional[Callable] = None
         
         self._response_handler = ResponseHandler(ui_manager)
         
@@ -66,18 +67,44 @@ class Agent:
         )
 
     @property
-    def messages(self):
+    def messages(self) -> List[Dict[str, Any]]:
+        """Get all messages in the conversation."""
         return self._history_manager.get_current_messages()
     
-    def add_message(self, message):
+    @property
+    def session_id(self) -> Optional[str]:
+        """Get the current session ID (from HistoryManager)."""
+        return getattr(self._history_manager, 'session_id', None)
+    
+    @property
+    def total_cost(self) -> float:
+        """Get total API cost for this session."""
+        return self._api_client.total_cost
+    
+    def add_message(self, message: Dict[str, Any]) -> None:
+        """Add a message to the conversation history."""
         self._history_manager.add_message(message)
 
-    async def start_conversation(self):
-        self.add_message(
-            MessageBuilder.create_system_message(
-                self._prompt_manager.get_system_prompt()
+    async def start_conversation(
+        self, 
+        on_turn_complete: Optional[Callable] = None
+    ) -> None:
+        """
+        Start the main conversation loop.
+        
+        Args:
+            on_turn_complete: Optional async callback called after each turn completes.
+                              Use for saving session state.
+        """
+        self._on_turn_complete = on_turn_complete
+        
+        # Only add system message if not resuming (no existing messages)
+        if not self.messages:
+            self.add_message(
+                MessageBuilder.create_system_message(
+                    self._prompt_manager.get_system_prompt()
+                )
             )
-        )
         
         user_input = await self._ui_manager.get_user_input()
         self.add_message(MessageBuilder.create_user_message(user_input))
@@ -167,6 +194,10 @@ class Agent:
                     f"[debug] Turn completed without tool call | len={len(trimmed_content)}"
                 )
             return
+        
+        # Save session after each turn
+        if self._on_turn_complete:
+            await self._on_turn_complete()
         
         user_input = await self._ui_manager.get_user_input()
         self.add_message(MessageBuilder.create_user_message(user_input))

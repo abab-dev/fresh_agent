@@ -22,6 +22,7 @@ class AgentState(BaseModel):
     context_window_percent: float = 0.0
     todos: List[TodoItem] = Field(default_factory=list)
     current_task_id: Optional[str] = None
+    session_id: Optional[str] = None  # For session persistence
 
     model_config = {"frozen": False}
 

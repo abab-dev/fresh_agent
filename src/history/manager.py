@@ -8,6 +8,7 @@ from src.agent.state import TokenUsage
 
 if TYPE_CHECKING:
     from src.agent.client import LLMClient
+    from src.storage.session_storage import SessionStorage
 
 
 class UIProtocol(Protocol):
@@ -72,6 +73,9 @@ class HistoryManager(BaseHistoryManager):
         api_client: Optional["LLMClient"] = None,
         model_max_tokens: int = 200, 
         compress_threshold: float = 0.8,
+        storage: Optional["SessionStorage"] = None,
+        session_id: Optional[str] = None,
+        workspace: Optional[str] = None,
     ):
         super().__init__()
         self._ui_manager = ui_manager
@@ -79,6 +83,64 @@ class HistoryManager(BaseHistoryManager):
         self._model_max_tokens = int(os.getenv("MODEL_MAX_TOKENS", model_max_tokens)) * 1024
         self._compress_threshold = float(os.getenv("COMPRESS_THRESHOLD", compress_threshold))
         self._tool_result_count = 0
+        
+        # Session persistence
+        self._storage = storage
+        self._session_id = session_id
+        self._workspace = workspace or os.getcwd()
+        
+        # Auto-load if session exists
+        if storage and session_id:
+            self.load()
+
+    @property
+    def session_id(self) -> Optional[str]:
+        """Get the current session ID."""
+        return self._session_id
+    
+    @session_id.setter
+    def session_id(self, value: str) -> None:
+        """Set the session ID."""
+        self._session_id = value
+
+    def flush(self) -> None:
+        """
+        Save current state to disk.
+        Call after each turn to persist the session.
+        """
+        if not self._storage or not self._session_id:
+            return
+        
+        self._storage.save_session(
+            session_id=self._session_id,
+            state={},  # Minimal state - messages are the main data
+            messages=self.get_current_messages(),
+            workspace=self._workspace,
+        )
+    
+    def load(self) -> bool:
+        """
+        Load session from disk if it exists.
+        
+        Returns:
+            True if session was loaded, False if new session
+        """
+        if not self._storage or not self._session_id:
+            return False
+        
+        if not self._storage.session_exists(self._session_id):
+            return False
+        
+        try:
+            _, messages, _ = self._storage.load_session(self._session_id)
+            self.messages_history[0] = messages
+            self._ui_manager.print_info(
+                f"Resumed session: {self._session_id} ({len(messages)} messages)"
+            )
+            return True
+        except Exception as e:
+            self._ui_manager.print_info(f"Failed to load session: {e}")
+            return False
 
     def add_message(self, message) -> None:
         self.messages_history[-1].append(message)

@@ -127,20 +127,62 @@ async def main():
     import argparse
     import os
     from src.agent.factory import AgentFactory
-    
+    from src.storage.session_storage import SessionStorage
+
     # Parse CLI arguments
     parser = argparse.ArgumentParser(description="Run the coding agent")
     parser.add_argument(
-        "--repo-path", "-r",
+        "--repo-path",
+        "-r",
         type=str,
         default=None,
-        help="Path to the repository to work in (also: REPO_PATH env var)"
+        help="Path to the repository to work in (also: REPO_PATH env var)",
+    )
+    parser.add_argument(
+        "--session",
+        "-s",
+        type=str,
+        default=None,
+        help="Session ID to resume or create",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the most recent session for this workspace",
+    )
+    parser.add_argument(
+        "--list-sessions",
+        action="store_true",
+        help="List saved sessions and exit",
+    )
+    parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Don't save session to disk",
     )
     args = parser.parse_args()
-    
+
+    storage = SessionStorage()
+
+    # Handle --list-sessions
+    if args.list_sessions:
+        sessions = storage.list_sessions()
+        if not sessions:
+            print("No saved sessions found.")
+        else:
+            print(f"{'ID':<30} {'Title':<25} {'Workspace':<30} {'Updated'}")
+            print("-" * 100)
+            for s in sessions:
+                session_id = s["id"][:28] + ".." if len(s["id"]) > 30 else s["id"]
+                title = (s["title"] or "")[:23] + ".." if len(s.get("title", "") or "") > 25 else (s.get("title") or "Untitled")
+                workspace = (s.get("workspace") or "")[:28] + ".." if len(s.get("workspace", "") or "") > 30 else (s.get("workspace") or "")
+                updated = (s.get("updated_at") or "")[:19]
+                print(f"{session_id:<30} {title:<25} {workspace:<30} {updated}")
+        return
+
     # Determine working directory: CLI flag > env var > current dir
     repo_path = args.repo_path or os.environ.get("REPO_PATH", None)
-    
+
     if repo_path:
         repo_path = os.path.abspath(os.path.expanduser(repo_path))
         if os.path.isdir(repo_path):
@@ -149,19 +191,66 @@ async def main():
         else:
             print(f"Error: Directory not found: {repo_path}")
             sys.exit(1)
-    
-    print(f"Agent initialized. Type your message or /exit to quit.\n")
-    
-    ui = SimpleUI()
-    
-    # Determine workspace - use repo_path if set, otherwise cwd
+
     workspace = repo_path or os.getcwd()
-    
+
+    # Determine session ID
+    session_id = None
+
+    if args.session:
+        # Explicit session ID
+        session_id = args.session
+        if storage.session_exists(session_id):
+            print(f"Resuming session: {session_id}")
+        else:
+            print(f"Creating new session: {session_id}")
+
+    elif args.resume:
+        # Resume most recent session for this workspace
+        session_id = storage.get_latest_session(workspace)
+        if session_id:
+            print(f"Resuming session: {session_id}")
+        else:
+            print("No previous session found for this workspace. Starting new session.")
+            session_id = storage.generate_session_id()
+
+    else:
+        # New session
+        session_id = storage.generate_session_id()
+
+    print(f"Session: {session_id}")
+    print(f"Agent initialized. Type your message or /exit to quit.\n")
+
+    ui = SimpleUI()
+
+    # Create history_manager with session persistence built-in
+    history_manager = AgentFactory.create_history_manager(
+        ui_manager=ui,
+        storage=storage if not args.no_save else None,
+        session_id=session_id,
+        workspace=workspace,
+    )
+
     try:
-        agent = AgentFactory.create_agent(ui_manager=ui, workspace_root=workspace)
-        await agent.start_conversation()
+        agent = AgentFactory.create_agent(
+            ui_manager=ui,
+            workspace_root=workspace,
+            history_manager=history_manager,
+        )
+
+        # Use HistoryManager's flush callback for auto-save
+        async def on_turn_complete():
+            """Called after each turn to save state."""
+            history_manager.flush()
+
+        await agent.start_conversation(on_turn_complete=on_turn_complete)
+
     except KeyboardInterrupt:
-        print("\nGoodbye!")
+        # Save on exit
+        if not args.no_save and session_id:
+            print("\nSaving session...")
+            history_manager.flush()
+        print("Goodbye!")
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)

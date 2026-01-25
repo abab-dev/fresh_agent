@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from src.agent.config import AgentConfig
     from src.prompts.manager import PromptManager
     from src.subagents.manager import SubagentManager
+    from src.storage.session_storage import SessionStorage
 
 
 class UIProtocol(Protocol):
@@ -55,7 +56,10 @@ class AgentFactory:
         ui_manager: Optional[UIProtocol] = None,
         api_client: Optional["LLMClient"] = None,
         model_max_tokens: int = 200,
-        compress_threshold: float = 0.8
+        compress_threshold: float = 0.8,
+        storage: Optional["SessionStorage"] = None,
+        session_id: Optional[str] = None,
+        workspace: Optional[str] = None,
     ) -> "HistoryManager":
         from src.history.manager import HistoryManager
         if ui_manager is None:
@@ -64,7 +68,10 @@ class AgentFactory:
             ui_manager=ui_manager,
             api_client=api_client,
             model_max_tokens=model_max_tokens,
-            compress_threshold=compress_threshold
+            compress_threshold=compress_threshold,
+            storage=storage,
+            session_id=session_id,
+            workspace=workspace,
         )
     
     @staticmethod
