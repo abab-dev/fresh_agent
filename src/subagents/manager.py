@@ -11,6 +11,7 @@ from dataclasses import dataclass
 @dataclass
 class SubagentConfig:
     """Configuration for a sub-agent."""
+
     name: str
     prompt: str
     tools: List[str]  # Tool names this sub-agent can use
@@ -108,41 +109,43 @@ EXPLORER_TOOLS = [
 class SubagentManager:
     """
     Registry for sub-agents. Currently just Explorer.
-    
+
     Usage:
         manager = SubagentManager(workspace_root="/path/to/repo")
         config = manager.get_subagent("explorer")
         # Use config.prompt and config.tools to spawn the sub-agent
     """
-    
+
     def __init__(self, workspace_root: str = "."):
         self.workspace_root = workspace_root
         self._registry: Dict[str, SubagentConfig] = {}
         self._register_explorer()
-    
+
     def _register_explorer(self):
         """Register the Explorer sub-agent."""
         self._registry["explorer"] = SubagentConfig(
             name="explorer",
             prompt=EXPLORER_PROMPT.format(workspace_root=self.workspace_root),
             tools=EXPLORER_TOOLS,
-            description="Specialized for codebase search and exploration"
+            description="Specialized for codebase search and exploration",
         )
-    
+
     def get_subagent(self, name: str) -> SubagentConfig:
         """Get a sub-agent configuration by name."""
         if name not in self._registry:
-            raise ValueError(f"Sub-agent '{name}' not found. Available: {list(self._registry.keys())}")
+            raise ValueError(
+                f"Sub-agent '{name}' not found. Available: {list(self._registry.keys())}"
+            )
         return self._registry[name]
-    
+
     def get_prompt(self, name: str) -> str:
         """Get the system prompt for a sub-agent."""
         return self.get_subagent(name).prompt
-    
+
     def get_tools(self, name: str) -> List[str]:
         """Get allowed tools for a sub-agent."""
         return self.get_subagent(name).tools
-    
+
     def list_subagents(self) -> List[str]:
         """List all registered sub-agent names."""
         return list(self._registry.keys())

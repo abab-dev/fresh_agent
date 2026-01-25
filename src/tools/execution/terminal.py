@@ -1,25 +1,37 @@
 import asyncio
 import os
-import subprocess
+import signal
 from typing import Optional
 from src.tools.base import BaseTool
+from src.tools.execution.truncation import truncate_output
 
 
 TOOL_DESCRIPTION = """Execute a shell command and return its output.
 
 Use this for:
 - Running build commands, tests, linters
-- Checking system state (git status, file checks)
+- Git operations (status, diff, commit, push)
 - Installing dependencies
-- Any shell-based automation
+- Running tests
 
-IMPORTANT: Set need_user_approve=true for any potentially destructive command:
-- Commands with sudo, rm, chmod, chown
-- Package installations (pip install, npm install -g)
-- Git push, git reset --hard
-- Any command that modifies system state
+IMPORTANT GUIDELINES:
+1. Use `workdir` parameter instead of `cd && command` patterns
+2. Set need_user_approve=true for destructive commands (rm, sudo, git push --force)
+3. For long outputs, results are automatically truncated with a file path for full content
 
-The command runs in a bash shell with a configurable timeout."""
+DO NOT use this for:
+- Reading files (use read_file instead)
+- Writing/editing files (use edit_file, search_replace instead)  
+- Searching code (use ripgrep, glob instead)
+
+When debugging:
+1. Write a small test script to reproduce the issue
+2. Run it to see the actual error
+3. Fix based on real error output
+4. Delete test script when done"""
+
+
+SIGKILL_TIMEOUT_MS = 200
 
 
 class CmdRunner(BaseTool):
@@ -32,14 +44,42 @@ class CmdRunner(BaseTool):
     def get_tool_name():
         return "cmd_runner"
 
+    async def _kill_process(self, process):
+        """Kill process with SIGTERM, wait, then SIGKILL if needed."""
+        if process.returncode is not None:
+            return
+        
+        try:
+            # Try SIGTERM first
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=SIGKILL_TIMEOUT_MS / 1000)
+            except asyncio.TimeoutError:
+                # Force kill if still running
+                process.kill()
+                await process.wait()
+        except ProcessLookupError:
+            pass  # Process already dead
+
     async def act(
         self, 
         command: str,
-        cwd: Optional[str] = None,
+        workdir: Optional[str] = None,
+        description: Optional[str] = None,
         timeout: Optional[int] = None,
         need_user_approve: bool = False
     ):
-        working_dir = cwd or self._cwd
+        """
+        Execute a shell command.
+        
+        Args:
+            command: The shell command to execute
+            workdir: Working directory (use this instead of cd &&)
+            description: Brief description of what this command does
+            timeout: Timeout in seconds (default 120)
+            need_user_approve: Set true for dangerous commands
+        """
+        working_dir = workdir or self._cwd
         cmd_timeout = timeout or self._default_timeout
         
         if not os.path.isdir(working_dir):
@@ -51,31 +91,40 @@ class CmdRunner(BaseTool):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_dir,
-                env={**os.environ, "PAGER": "cat"}
+                env={**os.environ, "PAGER": "cat"},
+                start_new_session=True  # For proper process group kill
             )
             
+            timed_out = False
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(),
                     timeout=cmd_timeout
                 )
             except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+                timed_out = True
+                await self._kill_process(process)
                 return {
                     "error": f"Command timed out after {cmd_timeout}s",
-                    "command": command
+                    "command": command,
+                    "description": description
                 }
             
             stdout_text = stdout.decode("utf-8", errors="replace")
             stderr_text = stderr.decode("utf-8", errors="replace")
             
-            output = self._format_output(stdout_text, stderr_text, process.returncode)
+            raw_output = self._format_output(stdout_text, stderr_text, process.returncode)
+            
+            # Apply truncation
+            truncated = truncate_output(raw_output)
             
             return {
-                "result": output,
+                "result": truncated.content,
                 "exit_code": process.returncode,
-                "success": process.returncode == 0
+                "success": process.returncode == 0,
+                "truncated": truncated.truncated,
+                "output_path": truncated.output_path,
+                "description": description
             }
             
         except Exception as e:
@@ -108,9 +157,13 @@ class CmdRunner(BaseTool):
                             "type": "string",
                             "description": "The shell command to execute."
                         },
-                        "cwd": {
+                        "workdir": {
                             "type": "string",
-                            "description": "Working directory for the command. Defaults to current directory."
+                            "description": "Working directory for the command. Use this instead of 'cd && command' patterns."
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Brief description of what this command does (5-10 words)."
                         },
                         "timeout": {
                             "type": "integer",

@@ -2,3 +2,5 @@
 .env
 terminal_ui/dist
 terminal_ui/node_modules
+ink_ui/dist
+ink_ui/node_modules

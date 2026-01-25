@@ -1,16 +1,67 @@
 from pathlib import Path
+from typing import Optional, List, Tuple
 from src.tools.base import BaseTool
 
 
-TOOL_DESCRIPTION = """Replace specific text patterns in a file.
+TOOL_DESCRIPTION = """Replace specific text patterns in a file with fuzzy matching.
 
 Use this for targeted edits where you want to:
 - Change specific function names, variables, or strings
 - Update configuration values
 - Fix typos or make small corrections
 
-The tool finds and replaces the first occurrence of the search pattern.
-Use with caution - verify the search pattern is unique in the file."""
+The tool uses smart matching:
+1. First tries exact match
+2. Falls back to whitespace-normalized matching (ignores extra spaces)
+3. Falls back to line-trimmed matching (ignores leading/trailing whitespace per line)
+
+This handles minor whitespace differences that often cause edit failures."""
+
+
+def find_match(content: str, search: str) -> Tuple[Optional[str], str]:
+    """
+    Find the best match for search string in content.
+    
+    Returns (matched_string, match_type) where match_type is:
+    - "exact": exact match found
+    - "whitespace": matched after normalizing whitespace
+    - "line_trimmed": matched after trimming lines
+    - "not_found": no match
+    """
+    # 1. Try exact match first
+    if search in content:
+        return search, "exact"
+    
+    # 2. Try whitespace-normalized matching
+    normalized_search = ' '.join(search.split())
+    content_lines = content.split('\n')
+    search_lines = search.split('\n')
+    
+    # Single line whitespace match
+    if len(search_lines) == 1:
+        for line in content_lines:
+            if ' '.join(line.split()) == normalized_search:
+                return line, "whitespace"
+    
+    # Multi-line whitespace match
+    if len(search_lines) > 1:
+        for i in range(len(content_lines) - len(search_lines) + 1):
+            block = content_lines[i:i + len(search_lines)]
+            block_normalized = ' '.join('\n'.join(block).split())
+            if block_normalized == normalized_search:
+                return '\n'.join(block), "whitespace"
+    
+    # 3. Try line-trimmed matching (each line trimmed independently)
+    search_trimmed = [line.strip() for line in search_lines]
+    
+    for i in range(len(content_lines) - len(search_lines) + 1):
+        block = content_lines[i:i + len(search_lines)]
+        block_trimmed = [line.strip() for line in block]
+        
+        if block_trimmed == search_trimmed:
+            return '\n'.join(block), "line_trimmed"
+    
+    return None, "not_found"
 
 
 class SearchReplaceTool(BaseTool):
@@ -39,25 +90,43 @@ class SearchReplaceTool(BaseTool):
         try:
             content = path.read_text(encoding="utf-8")
             
-            if search not in content:
-                return {"error": f"Search pattern not found in file"}
+            # Find match using fuzzy matching
+            matched, match_type = find_match(content, search)
             
-            count = content.count(search)
+            if matched is None:
+                return {
+                    "error": "Search pattern not found in file",
+                    "hint": "Check for whitespace differences. The search string must match the file content."
+                }
+            
+            # Count occurrences of the matched string
+            count = content.count(matched)
             
             if replace_all:
-                new_content = content.replace(search, replace)
+                new_content = content.replace(matched, replace)
                 replaced_count = count
             else:
-                new_content = content.replace(search, replace, 1)
+                if count > 1:
+                    return {
+                        "error": f"Found {count} occurrences. Provide more context to uniquely identify the target, or set replace_all=true.",
+                        "match_type": match_type
+                    }
+                new_content = content.replace(matched, replace, 1)
                 replaced_count = 1
             
             path.write_text(new_content, encoding="utf-8")
             
-            return {
+            result = {
                 "result": f"Replaced {replaced_count} occurrence(s) in {file_path}",
                 "total_matches": count,
-                "replaced": replaced_count
+                "replaced": replaced_count,
+                "match_type": match_type
             }
+            
+            if match_type != "exact":
+                result["note"] = f"Used {match_type} matching (original search had whitespace differences)"
+            
+            return result
             
         except PermissionError:
             return {"error": f"Permission denied: {file_path}"}
@@ -79,7 +148,7 @@ class SearchReplaceTool(BaseTool):
                         },
                         "search": {
                             "type": "string",
-                            "description": "The exact text to search for."
+                            "description": "The text to search for. Fuzzy matching handles minor whitespace differences."
                         },
                         "replace": {
                             "type": "string",
@@ -95,3 +164,4 @@ class SearchReplaceTool(BaseTool):
                 }
             }
         }
+
