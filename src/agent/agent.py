@@ -159,11 +159,23 @@ class Agent:
         messages = MessageBuilder.apply_cache_control(
             self._history_manager.get_current_messages()
         )
+        # Sanitize messages - Gemini requires non-empty content
+        messages = self._sanitize_messages(messages)
         return {
             "messages": messages,
             # Use main agent tools (excludes explorer-only search tools)
             "tools": self._tool_manager.get_main_agent_tools(),
         }
+    
+    def _sanitize_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Ensure all messages have valid content for Gemini API."""
+        for msg in messages:
+            if msg.get("role") == "assistant":
+                content = msg.get("content", "")
+                # Empty string or None is invalid - add placeholder
+                if not content or (isinstance(content, str) and not content.strip()):
+                    msg["content"] = "."
+        return messages
 
     def _build_assistant_message(self, response_message) -> dict:
         has_tool_calls = ResponseHandler.has_tool_calls(response_message)
@@ -175,11 +187,17 @@ class Agent:
             tool_calls=response_message.tool_calls if has_tool_calls else None
         )
         
-        if not has_tool_calls and not trimmed_content:
-            self._ui_manager.print_info(
-                "[debug] Assistant returned empty response, using fallback message"
-            )
-            assistant_message["content"] = MessageBuilder.create_fallback_content()
+        # Gemini API requires non-empty text in content
+        # If no text content, add a minimal placeholder
+        if not trimmed_content:
+            if has_tool_calls:
+                # Tool-only turn - add minimal placeholder
+                assistant_message["content"] = "."
+            else:
+                self._ui_manager.print_info(
+                    "[debug] Assistant returned empty response, using fallback message"
+                )
+                assistant_message["content"] = MessageBuilder.create_fallback_content()
         
         return assistant_message
 
