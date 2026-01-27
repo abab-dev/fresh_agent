@@ -33,6 +33,9 @@ class BridgeUI:
     
     async def get_user_input(self) -> str:
         """Read user input from stdin (JSON format)."""
+        # Explicitly tell the UI we are waiting for input
+        self.emit("input_request", {})
+        
         loop = asyncio.get_event_loop()
         try:
             line = await loop.run_in_executor(None, sys.stdin.readline)
@@ -58,7 +61,7 @@ class BridgeUI:
     
     def stop_stream_display(self) -> None:
         self._streaming = False
-        self.emit("stream_end", {"content": self._stream_buffer})
+        self.emit("stream_end", {"content": ""})
         self._stream_buffer = ""
     
     def show_preparing_tool(self, name: str, args: dict) -> None:

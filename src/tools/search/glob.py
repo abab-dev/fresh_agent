@@ -73,7 +73,7 @@ class GlobTool(BaseTool):
             return await self._search_find(pattern, search_path)
 
     async def _search_fd(self, pattern: str, path: str):
-        cmd = ["fd", "--glob", "--max-results", "100", "--", pattern, path]
+        cmd = ["fd", "--type", "f", "--full-path", "--glob", "--max-results", "100", "--", pattern, path]
         
         try:
             process = await asyncio.create_subprocess_exec(

@@ -34,7 +34,10 @@ export const useBridge = () => {
         setCurrentResponse(prev => {
             const final = (prev + fallback).replace(/^[\n\r]+/, '')
             if (final) {
-                setMessages(msgs => [...msgs, { type: 'agent', content: final }])
+                // Defer to avoid render loop issues
+                setTimeout(() => {
+                    setMessages(msgs => [...msgs, { type: 'agent', content: final }])
+                }, 0)
             }
             return ''
         })
@@ -67,6 +70,13 @@ export const useBridge = () => {
 
             case 'stream_end':
                 finalizeResponse((data.content as string) || '')
+                setMode('thinking') // Transition out of responding immediately
+                setStatusLine('')
+                break
+
+            case 'input_request':
+                setMode('ready')
+                setStatusLine('Waiting for input...')
                 break
 
             case 'tool_request':

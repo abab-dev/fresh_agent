@@ -30,10 +30,17 @@ export const useBridge = () => {
     }
 
     const finalizeResponse = (fallback = '') => {
+        // Use the functional update to get current value, but perform side effect outside if possible
+        // Or just read the boolean ref if strictly needed, but here we can just do:
         setCurrentResponse(prev => {
             const final = (prev + fallback).replace(/^[\n\r]+/, '')
             if (final) {
-                setMessages(msgs => [...msgs, { type: 'agent', content: final }])
+                // We must defer the setMessages to avoid render loop warning or strict mode issues
+                // However, ideally we assume prev matches the streams.
+                // Since we fixed buffer duplication in python, fallback is likely empty.
+                setTimeout(() => {
+                    setMessages(msgs => [...msgs, { type: 'agent', content: final }])
+                }, 0)
             }
             return ''
         })
@@ -66,6 +73,8 @@ export const useBridge = () => {
 
             case 'stream_end':
                 finalizeResponse((data.content as string) || '')
+                setMode('thinking') // Transition out of responding immediately
+                setStatusLine('')
                 break
 
             case 'tool_request':
@@ -141,6 +150,11 @@ export const useBridge = () => {
 
             case 'info':
                 appendMessage('system', data.content as string)
+                break
+
+            case 'input_request':
+                setMode('ready')
+                setStatusLine('Waiting for input...')
                 break
 
             // Subagent events
