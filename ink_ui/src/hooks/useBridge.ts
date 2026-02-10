@@ -1,268 +1,297 @@
 import { useState, useEffect, useRef } from 'react'
 import { spawn, ChildProcess } from 'child_process'
 import { useApp } from 'ink'
-import { AppMode, Message, ToolRequest, BridgeMessage } from '../types.js'
+import { AppMode, Message, ToolRequest } from '../types.js'
+
+interface StdioEvent {
+    type: string
+    span: { run_id: string; agent: string; depth: number }
+    data: Record<string, unknown>
+    timestamp: string
+}
+
+interface JsonRpcResponse {
+    jsonrpc: string
+    id: number
+    result?: unknown
+    error?: { code: number; message: string }
+}
 
 export const useBridge = () => {
     const [mode, setMode] = useState<AppMode>('loading')
     const [messages, setMessages] = useState<Message[]>([])
     const [currentResponse, setCurrentResponse] = useState('')
-    const [workingDir, setWorkingDir] = useState('')
+    const [workingDir, setWorkingDir] = useState(process.cwd())
     const [pendingTool, setPendingTool] = useState<ToolRequest | null>(null)
     const [statusLine, setStatusLine] = useState('')
+    const [isFirstMessage, setIsFirstMessage] = useState(true)
 
     const processRef = useRef<ChildProcess | null>(null)
-    const stoppingRef = useRef(false)
+    const messageIdRef = useRef(0)
+    const pendingInputRef = useRef<{ requestId: string; resolve: (value: string) => void } | null>(null)
     const { exit } = useApp()
 
     const pythonCmd = process.env.PYTHON || 'python3'
 
-    const send = (msg: BridgeMessage) => {
+    const send = (method: string, params: Record<string, unknown> = {}) => {
         if (processRef.current?.stdin?.writable) {
-            processRef.current.stdin.write(JSON.stringify(msg) + '\n')
+            const message = {
+                method,
+                params,
+                id: ++messageIdRef.current,
+            }
+            processRef.current.stdin.write(JSON.stringify(message) + '\n')
         }
     }
 
-    const appendMessage = (type: Message['type'], content?: unknown) => {
-        const text = typeof content === 'string' ? content.trim() : ''
-        if (!text) return
-        setMessages(prev => [...prev, { type, content: text }])
+    const appendMessage = (type: Message['type'], content: string) => {
+        if (!content.trim()) return
+        setMessages(prev => [...prev, { type, content: content.trim() }])
     }
 
-    const finalizeResponse = (fallback = '') => {
-        // Use the functional update to get current value, but perform side effect outside if possible
-        // Or just read the boolean ref if strictly needed, but here we can just do:
+    const finalizeStreamingResponse = () => {
         setCurrentResponse(prev => {
-            const final = (prev + fallback).replace(/^[\n\r]+/, '')
-            if (final) {
-                // We must defer the setMessages to avoid render loop warning or strict mode issues
-                // However, ideally we assume prev matches the streams.
-                // Since we fixed buffer duplication in python, fallback is likely empty.
+            if (prev.trim()) {
                 setTimeout(() => {
-                    setMessages(msgs => [...msgs, { type: 'agent', content: final }])
+                    setMessages(msgs => [...msgs, { type: 'agent', content: prev }])
                 }, 0)
             }
             return ''
         })
     }
 
-    const handleMessage = (msg: BridgeMessage) => {
-        const { type, data } = msg
+    const handleEvent = (event: StdioEvent) => {
+        const { type, data, span } = event
+        const indent = '  '.repeat(span.depth)
+        const agentLabel = span.depth > 0 ? `[${span.agent}]` : ''
 
         switch (type) {
-            case 'ready':
-                setMode('ready')
-                break
-
-            case 'environment_info':
-                setWorkingDir((data.working_directory as string) || '')
-                break
-
-            case 'thinking':
+            case 'workflow_start':
                 setMode('thinking')
-                setStatusLine('Thinking')
                 break
 
-            case 'stream_chunk':
+            case 'agent_start':
+                if (span.depth > 0) {
+                    appendMessage('tool', `${indent}◆ ${agentLabel} → ${(data.task as string || '').slice(0, 100)}`)
+                }
+                setStatusLine(`${agentLabel} thinking...`)
+                break
+
+            case 'agent_end':
+                if (span.depth > 0) {
+                    const output = (data.output as string || '').slice(0, 200)
+                    appendMessage('tool', `${indent}◆ ${agentLabel} ✓ ${output}`)
+                }
+                setStatusLine('')
+                break
+
+            case 'llm_start':
+                setMode('thinking')
+                setStatusLine(`${agentLabel} thinking...`)
+                break
+
+            case 'llm_stream_start':
                 setMode('responding')
+                setCurrentResponse('')
+                break
+
+            case 'llm_stream_chunk':
+                setMode('responding')
+                const chunk = data.content as string || ''
                 setCurrentResponse(prev => {
-                    const next = prev + (data.content as string)
+                    const next = prev + chunk
                     return prev === '' ? next.replace(/^\n+/, '') : next
                 })
                 break
 
-            case 'stream_end':
-                finalizeResponse((data.content as string) || '')
-                setMode('thinking') // Transition out of responding immediately
-                setStatusLine('')
-                break
-
-            case 'tool_request':
-                setPendingTool({ name: data.name as string, args: data.args as string })
-                setMode('approval')
-                break
-
-            case 'tool_executing':
-                setMode('executing')
-                setStatusLine(`> ${data.name}`)
-                break
-
-            case 'tool_preparing': {
-                setMode('executing')
-                setStatusLine(`> ${data.name}`)
-                const args = (data.args || {}) as Record<string, unknown>
-                const summary = Object.entries(args)
-                    .map(([k, v]) => `${k}=${typeof v === 'string' ? v.slice(0, 50) : v}`)
-                    .join(', ')
-                appendMessage('tool', `● ${data.name}(${summary})`)
-                break
-            }
-
-            case 'tool_result': {
-                const name = (data.name as string) || 'tool'
-                const success = data.success as boolean | undefined
-                const result = typeof data.result === 'string' ? data.result : JSON.stringify(data.result)
-                const status = success === false ? '✗' : '✓'
-                appendMessage('tool', `${status} ${name}: ${result.slice(0, 200)}`)
-                setStatusLine('')
-                break
-            }
-
-            case 'turn_status': {
-                const state = (data.state as string) || ''
-                setStatusLine(state)
-                break
-            }
-
-            case 'stream_start':
-                setMode('responding')
-                setStatusLine('Responding')
-                setCurrentResponse('')
-                break
-
-            case 'complete':
-            case 'interrupted':
-            case 'stopped':
-                setMode('ready')
-                setStatusLine('')
-                if (type === 'stopped') {
-                    setMessages(prev => [...prev, { type: 'system', content: '[x] Agent stopped' }])
-                    setCurrentResponse('')
-                    setPendingTool(null)
-                    stoppingRef.current = false
+            case 'llm_end':
+                const tokens = data.tokens as number || 0
+                setStatusLine(`${agentLabel} (${tokens} tokens)`)
+                // Finalize streaming response if we were streaming
+                if (mode === 'responding') {
+                    finalizeStreamingResponse()
                 }
                 break
 
-            case 'error':
-                appendMessage('error', (data.message as string) || (data.error as string))
-                setMode('ready')
-                break
-
-            case 'message': {
-                const content = data.content as string
-                appendMessage('system', content)
-                break
-            }
-
-            case 'assistant_message':
-                finalizeResponse(data.content as string)
-                break
-
-            case 'info':
-                appendMessage('system', data.content as string)
-                break
-
-            case 'input_request':
-                setMode('ready')
-                setStatusLine('Waiting for input...')
-                break
-
-            // Subagent events
-            case 'subagent_start': {
-                const agent = data.agent as string
-                const task = data.task as string
-                const taskPreview = task.length > 100 ? task.slice(0, 100) + '...' : task
-                appendMessage('tool', `◆ [${agent}] Started: ${taskPreview}`)
-                setStatusLine(`[${agent}] running...`)
-                break
-            }
-
-            case 'subagent_tool': {
-                const agent = data.agent as string
-                const name = data.name as string
+            case 'tool_start':
+                setMode('executing')
+                const toolName = data.name as string
                 const args = (data.args || {}) as Record<string, unknown>
+                setStatusLine(`${agentLabel} ${toolName}...`)
+
+                // Show tool with arguments
                 const argSummary = Object.entries(args)
                     .slice(0, 3)
-                    .map(([k, v]) => `${k}=${typeof v === 'string' ? v.slice(0, 30) : v}`)
+                    .map(([k, v]) => `${k}=${typeof v === 'string' ? v.slice(0, 40) : JSON.stringify(v).slice(0, 40)}`)
                     .join(', ')
-                appendMessage('tool', `  L [${agent}] ${name}(${argSummary})`)
+                appendMessage('tool', `${indent}🔧 ${toolName}(${argSummary})`)
                 break
-            }
 
-            case 'subagent_tool_result': {
-                const agent = data.agent as string
+            case 'tool_end':
                 const name = data.name as string
                 const success = data.success as boolean
-                const result = (data.result as string) || ''
+                const duration = data.duration_ms as number || 0
                 const status = success ? '✓' : '✗'
-                const preview = result.length > 100 ? result.slice(0, 100) + '...' : result
-                appendMessage('tool', `  L [${agent}] ${status} ${name}: ${preview}`)
+                appendMessage('tool', `${indent}${status} ${name} (${duration}ms)`)
                 break
-            }
 
-            case 'subagent_complete': {
-                const agent = data.agent as string
-                const result = (data.result as string) || ''
-                const preview = result.length > 200 ? result.slice(0, 200) + '...' : result
-                appendMessage('tool', `◆ [${agent}] Complete: ${preview}`)
+            case 'delegation_start':
+                appendMessage('tool', `${indent}📤 → ${data.agent}`)
+                setStatusLine(`${agentLabel} delegating to ${data.agent}...`)
+                break
+
+            case 'delegation_end':
+                appendMessage('tool', `${indent}📥 ← done`)
                 setStatusLine('')
                 break
-            }
+
+            case 'human_input_waiting':
+                setMode('ready')
+                setStatusLine('Waiting for your input...')
+                const requestId = data.request_id as string
+                // Store for later response
+                pendingInputRef.current = {
+                    requestId,
+                    resolve: (response: string) => {
+                        send('respond', { request_id: requestId, response })
+                        pendingInputRef.current = null
+                    }
+                }
+                break
+
+            case 'human_input_received':
+                setMode('thinking')
+                setStatusLine('')
+                break
+
+            case 'approval_required':
+                setMode('approval')
+                setPendingTool({
+                    name: data.tool as string,
+                    args: JSON.stringify(data.args || {}, null, 2),
+                    requestId: data.request_id as string,
+                })
+                break
+
+            case 'tool_denied':
+                appendMessage('system', `🚫 Denied: ${data.tool}`)
+                setPendingTool(null)
+                setMode('ready')
+                break
+
+            case 'workflow_end':
+                setMode('ready')
+                setStatusLine('')
+                // Don't show output here - it came from JSON-RPC response
+                break
+
+            case 'environment_info':
+                setWorkingDir((data.working_directory as string) || process.cwd())
+                break
         }
     }
 
+    const handleResponse = (response: JsonRpcResponse) => {
+        if (response.error) {
+            appendMessage('error', response.error.message)
+            setMode('ready')
+        }
+        // Don't show output from result - it should have streamed already via llm_stream_chunk
+        // Just acknowledge completion
+        setMode('ready')
+    }
+
     useEffect(() => {
-        // Spawn the Python bridge
-        processRef.current = spawn(pythonCmd, ['-m', 'src.bridge_ui'], {
+        // Spawn stdio server
+        processRef.current = spawn(pythonCmd, ['-m', 'src.stdio_server'], {
             stdio: ['pipe', 'pipe', 'pipe'],
-            cwd: process.cwd()
+            cwd: process.cwd(),
         })
 
         let buffer = ''
 
         processRef.current.stdout?.on('data', (chunk: Buffer) => {
             buffer += chunk.toString()
-            const regex = /__MSG__(.*?)__END__/g
-            let match
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
 
-            while ((match = regex.exec(buffer)) !== null) {
+            for (const line of lines) {
+                if (!line.trim()) continue
+
                 try {
-                    const msg = JSON.parse(match[1]) as BridgeMessage
-                    handleMessage(msg)
-                } catch (e) {
+                    const parsed = JSON.parse(line)
+
+                    // Check if it's a JSON-RPC response or an event
+                    if ('jsonrpc' in parsed && 'id' in parsed) {
+                        handleResponse(parsed as JsonRpcResponse)
+                    } else if ('type' in parsed && 'span' in parsed) {
+                        handleEvent(parsed as StdioEvent)
+                    }
+                } catch {
                     // Ignore parse errors
                 }
             }
-
-            const lastEnd = buffer.lastIndexOf('__END__')
-            if (lastEnd !== -1) buffer = buffer.slice(lastEnd + 7)
         })
 
         processRef.current.stderr?.on('data', (chunk: Buffer) => {
-            // Log stderr for debugging
             const text = chunk.toString().trim()
             if (text) {
-                appendMessage('error', text)
+                // Stderr is for server logs
+                console.error('[server]', text)
             }
         })
 
         processRef.current.on('close', () => exit())
 
-        return () => { processRef.current?.kill() }
+        // Initial ready state
+        setTimeout(() => setMode('ready'), 500)
+
+        return () => {
+            send('end_session')
+            processRef.current?.kill()
+        }
     }, [])
 
     const sendUserInput = (message: string) => {
         setMessages(prev => [...prev, { type: 'user', content: message }])
         setMode('thinking')
-        send({ type: 'user_input', data: { message } })
+
+        // Check if this is a response to a pending input request
+        if (pendingInputRef.current) {
+            pendingInputRef.current.resolve(message)
+        } else {
+            // New run or continue - use isFirstMessage flag
+            if (isFirstMessage) {
+                send('run', { task: message })
+                setIsFirstMessage(false)
+            } else {
+                send('continue', { input: message })
+            }
+        }
     }
 
-    const sendApproval = (approved: boolean, content = '') => {
-        send({ type: 'tool_approval', data: { approved, content } })
+    const sendApproval = (approved: boolean) => {
+        if (!pendingTool) return
+
+        const requestId = pendingTool.requestId
+        if (requestId) {
+            send('respond', { request_id: requestId, approved })
+        }
+
         setPendingTool(null)
         setMode(approved ? 'executing' : 'ready')
+
         if (!approved) {
-            setMessages(prev => [...prev, { type: 'system', content: `[x] Denied: ${pendingTool?.name}` }])
+            appendMessage('system', `[x] Denied: ${pendingTool.name}`)
         }
     }
 
     const stopAgent = () => {
-        if (!stoppingRef.current) {
-            stoppingRef.current = true
-            send({ type: 'stop_agent', data: {} })
-            setCurrentResponse('')
-            setPendingTool(null)
-        }
+        send('end_session')
+        setCurrentResponse('')
+        setPendingTool(null)
+        setMode('ready')
+        setIsFirstMessage(true)  // Reset for new conversation
     }
 
     return {
@@ -274,6 +303,6 @@ export const useBridge = () => {
         statusLine,
         sendUserInput,
         sendApproval,
-        stopAgent
+        stopAgent,
     }
 }

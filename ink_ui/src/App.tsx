@@ -41,7 +41,6 @@ const App: React.FC = () => {
     })
 
     useEffect(() => {
-        // Clear screen and hide cursor on mount
         process.stdout.write('\x1Bc')
         process.stdout.write('\x1B[?25l')
         return () => { process.stdout.write('\x1B[?25h') }

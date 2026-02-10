@@ -1,10 +1,3 @@
-"""
-Generic delegate tool for spawning sub-agents.
-
-The main agent calls this to delegate tasks to specialized sub-agents.
-The executor detects the delegation marker and spawns the appropriate sub-agent.
-"""
-
 from typing import Optional, List
 from src.tools.base import BaseTool
 
@@ -32,39 +25,29 @@ The sub-agent runs with restricted tools and returns a structured answer."""
 class DelegateTool(BaseTool):
     """
     Generic delegation tool.
-    
+
     Returns a marker that the executor detects to spawn the sub-agent.
     """
-    
+
     def __init__(self):
         super().__init__()
-    
+
     @staticmethod
     def get_tool_name():
         return "delegate"
-    
-    async def act(
-        self,
-        agent: str,
-        task: str,
-        context: Optional[str] = None
-    ):
+
+    async def act(self, agent: str, task: str, context: Optional[str] = None):
         """
         Delegate a task to a sub-agent.
-        
+
         Args:
             agent: Sub-agent to use (e.g., "explorer")
             task: The task/question for the sub-agent. Be specific.
             context: Optional additional context to help the sub-agent.
         """
         # Return a marker that the executor will detect
-        return {
-            "_delegate": True,
-            "agent": agent,
-            "task": task,
-            "context": context
-        }
-    
+        return {"_delegate": True, "agent": agent, "task": task, "context": context}
+
     def json_schema(self):
         return {
             "type": "function",
@@ -77,7 +60,7 @@ class DelegateTool(BaseTool):
                         "agent": {
                             "type": "string",
                             "enum": ["explorer"],  # Add more as we create them
-                            "description": "The sub-agent to delegate to."
+                            "description": "The sub-agent to delegate to.",
                         },
                         "task": {
                             "type": "string",
@@ -86,16 +69,16 @@ class DelegateTool(BaseTool):
 For explorer, use this format:
 QUESTION: [What you need to find out]
 KEYWORDS: [Search terms to look for]
-EXPECTED: [What kind of answer you need]"""
+EXPECTED: [What kind of answer you need]""",
                         },
                         "context": {
                             "type": "string",
-                            "description": "Optional context to help the sub-agent."
-                        }
+                            "description": "Optional context to help the sub-agent.",
+                        },
                     },
-                    "required": ["agent", "task"]
-                }
-            }
+                    "required": ["agent", "task"],
+                },
+            },
         }
 
 
@@ -106,8 +89,4 @@ def is_delegation_result(result: dict) -> bool:
 
 def get_delegation_info(result: dict) -> tuple:
     """Extract delegation info from result. Returns (agent, task, context)."""
-    return (
-        result.get("agent"),
-        result.get("task"),
-        result.get("context")
-    )
+    return (result.get("agent"), result.get("task"), result.get("context"))

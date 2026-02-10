@@ -26,7 +26,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     const isMultiline = content.includes('\n')
     const textWidth = width ? width - 4 : undefined
 
-    // For multiline content, render header separately
     if (isMultiline) {
         return (
             <Box flexDirection="column" width={textWidth}>
@@ -47,7 +46,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
         )
     }
 
-    // Single line
     return (
         <Box width={textWidth}>
             <Text wrap="wrap">

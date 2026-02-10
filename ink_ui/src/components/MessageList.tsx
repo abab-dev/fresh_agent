@@ -23,11 +23,9 @@ const MESSAGE_PRESETS: Record<Message['type'], MessagePreset> = {
     tool: { label: 'Tool', color: 'blueBright', variant: 'solid', icon: '⌘' }
 }
 
-// Render tool message with tree-like structure
 const ToolMessage: React.FC<{ content: string; width?: number }> = ({ content, width }) => {
     const textWidth = width ? width - 4 : undefined
 
-    // Check if it starts with status indicator
     const isSuccess = content.startsWith('✓')
     const isFailure = content.startsWith('✗')
 
@@ -41,7 +39,6 @@ const ToolMessage: React.FC<{ content: string; width?: number }> = ({ content, w
         )
     }
 
-    // Tool preparing format: ● ToolName(args)
     return (
         <Box flexDirection="column" width={textWidth}>
             <Text color="blueBright">⌘ </Text>
@@ -51,7 +48,6 @@ const ToolMessage: React.FC<{ content: string; width?: number }> = ({ content, w
 }
 
 export const MessageList: React.FC<MessageListProps> = ({ messages, width }) => {
-    // Show all messages except system (shown elsewhere)
     const visibleMessages = messages.filter(msg => msg.type !== 'system')
 
     return (

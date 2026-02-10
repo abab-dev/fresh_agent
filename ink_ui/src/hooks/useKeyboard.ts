@@ -1,4 +1,4 @@
-import { useInput, useApp } from 'ink'
+import { useInput, useApp, type Key } from 'ink'
 import { AppMode } from '../types.js'
 
 interface KeyboardOptions {
@@ -13,7 +13,7 @@ export const useKeyboard = (opts: KeyboardOptions) => {
     const { exit } = useApp()
     const { mode, onStop, onApprove, onDeny, onToggleArgs } = opts
 
-    useInput((input, key) => {
+    useInput((input: string, key: Key) => {
         // Escape to exit
         if (key.escape) {
             exit()

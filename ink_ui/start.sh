@@ -10,4 +10,4 @@
 cd "$(dirname "$0")/.."
 
 # Pass all arguments through
-exec bun run terminal_ui/src/index.tsx "$@"
+exec bun run ink_ui/src/index.tsx "$@"

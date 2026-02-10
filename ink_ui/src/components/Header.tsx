@@ -13,7 +13,6 @@ const truncatePath = (path: string, maxLen: number): string => {
     return '~/' + parts.slice(-2).join('/')
 }
 
-// Simple ASCII art logo
 const LOGO_WIDE = [
     '   ___                    __  ',
     '  /   | ____ ____  ____  / /_ ',

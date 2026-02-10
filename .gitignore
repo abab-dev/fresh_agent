@@ -5,3 +5,5 @@ terminal_ui/node_modules
 ink_ui/dist
 ink_ui/node_modules
 refs/
+/ink_ui/.sessions
+/.sessions

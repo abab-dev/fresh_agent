@@ -10,6 +10,7 @@ export interface Message {
 export interface ToolRequest {
     name: string
     args: string
+    requestId?: string  // For approval flow
 }
 
 export interface BridgeMessage {
