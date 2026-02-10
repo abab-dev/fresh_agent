@@ -1,109 +1,141 @@
-# Autonomous Coding Agent
+# Fresh Agent
 
-A modular, extensible framework for building autonomous coding agents with LLM backends.
+A coding assistant that runs in your terminal.
 
-## Features
+## What it does
 
-- **Recursive Agentic Loop**: Automatically handles tool calls until task completion
-- **Modular Tool System**: Lazy-loaded tools with registry pattern
-- **Context Management**: Automatic compression and LLM-based summarization
-- **History Tracking**: Full conversation history with token usage monitoring
-- **Memory Persistence**: Store and recall important information across sessions
-- **Sub-agents**: Specialized agents for code review, testing, refactoring, and debugging
+- Reads, edits, and searches your code
+- Runs shell commands
+- Uses Git
+- Delegates complex tasks to specialized sub-agents
+- Remembers things across conversations
 
-## Installation
+## Install
 
 ```bash
-# Install dependencies
-pip install -e .
-
-# Or with uv
 uv pip install -e .
 ```
 
-## Configuration
+## Setup
 
-Set your API key and optionally configure the model:
+Create a `.env` file:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_BASE_URL="https://api.openai.com/v1"  # Optional, for other providers
-export MODEL_NAME="gpt-4o"  # Optional, default is gpt-4o
-export MODEL_MAX_TOKENS="200"  # Optional, in thousands (200 = 200k)
+OPENAI_API_KEY=your-key-here
+MODEL_NAME=gpt-4o
 ```
 
-## Usage
+Or use any LiteLLM-compatible provider:
 
-### CLI
+```bash
+OPENAI_BASE_URL=https://your-provider.com/v1
+MODEL_NAME=openai/gpt-4o
+```
+
+## Run
 
 ```bash
 python main.py
 ```
 
-### Programmatic
+This starts a terminal UI. Type your request and press Enter.
 
-```python
-import asyncio
-from src.agent.factory import AgentFactory
+## How it works
 
-class MyUI:
-    # Implement UIProtocol methods...
-    pass
+The agent uses a **ReAct loop**: it thinks, calls tools, reads results, and repeats until done.
 
-async def main():
-    ui = MyUI()
-    agent = AgentFactory.create_agent(ui_manager=ui)
-    await agent.start_conversation()
+### Core components
 
-asyncio.run(main())
-```
+- **Runner**: Manages the agent lifecycle and handles delegation
+- **Agent**: Runs the think-act loop until it finishes
+- **Tools**: Read files, run commands, search code, etc.
+- **Streaming**: LLM responses stream in real-time
+
+### Agent delegation
+
+The main agent can delegate to specialized sub-agents:
+
+- **explorer**: Deep code search and analysis
+
+Add more agents in `stdio_server.py` by registering them with the Runner.
 
 ## Architecture
 
 ```
 src/
-├── agent/          # Core agent orchestration
-│   ├── agent.py    # Main Agent class with recursive loop
-│   ├── client.py   # LLM API client with streaming
-│   ├── executor.py # Tool execution logic
-│   ├── factory.py  # Component factory
-│   └── ...
-├── tools/          # Tool implementations
-│   ├── filesystem/ # File operations
-│   ├── execution/  # Shell commands
-│   ├── search/     # Grep, file search
-│   ├── git/        # Git operations
-│   ├── memory/     # Persistent notes
-│   └── utilities/  # Todos, scratchpad
-├── prompts/        # Prompt management
-├── history/        # Conversation tracking
-├── subagents/      # Specialized sub-agents
-└── utils/          # Shared utilities
+├── core/
+│   ├── runner.py       # Orchestrates agents and handles intents
+│   ├── agent.py        # ReAct loop (think → act → observe)
+│   ├── llm.py          # LiteLLM client with streaming
+│   ├── tools.py        # Tool execution and approval
+│   ├── models.py       # Data structures and events
+│   ├── events.py       # Event system for UI updates
+│   ├── delegation.py   # Delegation tool
+│   └── transports/
+│       └── stdio.py    # JSON-RPC transport for UI
+├── tools/
+│   ├── filesystem/     # read, edit, delete files
+│   ├── search/         # ripgrep, glob, file search
+│   ├── code/           # symbol extraction, context
+│   ├── git/            # status, diff, commit
+│   ├── memory/         # persistent notes
+│   └── utilities/      # scratchpad
+├── cli.py              # Terminal interface
+└── stdio_server.py     # JSON-RPC server for Ink UI
+
+ink_ui/
+└── src/
+    ├── App.tsx         # Main React component
+    ├── hooks/
+    │   └── useBridge.ts  # Backend communication
+    └── components/     # UI elements
 ```
 
-## Available Tools
+## Events
 
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read file contents with line ranges |
-| `edit_file` | Create or overwrite files |
+The agent emits events as it works. The UI listens and updates in real-time.
+
+Key events:
+- `WORKFLOW_START` / `WORKFLOW_END`
+- `LLM_START` / `LLM_STREAM_CHUNK` / `LLM_END`
+- `TOOL_START` / `TOOL_END`
+- `DELEGATION_START` / `DELEGATION_END`
+- `HUMAN_INPUT_WAITING`
+
+## Tools
+
+| Tool | What it does |
+|------|--------------|
+| `read_file` | Read file contents |
+| `edit_file` | Create or modify files |
 | `search_replace` | Find and replace in files |
 | `delete_file` | Delete files/directories |
 | `list_dir` | List directory contents |
-| `cmd_runner` | Execute shell commands |
-| `grep_search` | Search for patterns in files |
+| `cmd_runner` | Run shell commands |
+| `ripgrep` | Fast text search |
+| `glob` | Find files by pattern |
+| `grep_search` | Search in files |
 | `file_search` | Find files by name |
-| `git_status` | Get repository status |
+| `extract_symbols` | Get code structure |
+| `get_context` | Get code context |
+| `repo_structure` | Show repo tree |
+| `git_status` | Git status |
 | `git_diff` | Show changes |
 | `git_commit` | Commit changes |
-| `add_memory` | Store persistent notes |
-| `list_memories` | Retrieve stored notes |
-| `todo_write` | Manage todo list |
-| `scratchpad` | Thinking workspace |
+| `add_memory` | Save a note |
+| `list_memories` | List saved notes |
+| `scratchpad` | Agent's thinking space |
+| `delegate` | Hand off to another agent |
 
-## Project Instructions
+## Development
 
-Create an `AGENT.md` file in your project root to provide project-specific instructions to the agent.
+Run with environment variables:
+
+```bash
+REPO_PATH=/path/to/your/code python main.py
+```
+
+The agent will work in that directory.
 
 ## License
 
